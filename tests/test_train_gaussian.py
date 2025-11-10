@@ -246,7 +246,8 @@ def plot_histograms_comparison(
     plt.ylabel("Density")
     plt.legend()
     plt.grid(True, alpha=0.3)
-    plt.show()
+    plt.show(block=False)
+    plt.pause(0.1)  # Brief pause to ensure plot renders
 
 
 @pytest.mark.slow
@@ -288,24 +289,24 @@ class TestTrainGaussian(unittest.TestCase):
         key = jax.random.key(42)
 
         # Log initialization
-        print("\n" + "=" * 80)
-        print("Gaussian RBM Training Test")
-        print("=" * 80)
-        print("\nData Generation Parameters:")
-        print(f"  mu1 = {self.mu1}, mu2 = {self.mu2}")
-        print(f"  sigma1 = {self.sigma1}, sigma2 = {self.sigma2}")
-        print(f"  mixture_weight = {self.mixture_weight}")
-        print(f"  n_train_samples = {self.n_train_samples}")
-        print(f"  n_test_samples = {self.n_test_samples}")
-        print(f"  quantization_max_value = {self.quantization_max_value}")
-        print("\nModel Hyperparameters:")
-        print(f"  n_visible = {self.n_visible}, n_hidden = {self.n_hidden}")
-        print(f"  beta = {self.beta}")
-        print(f"  learning_rate = {self.learning_rate}")
-        print(f"  batch_size_positive = {self.batch_size_positive}")
-        print(f"  batch_size_negative = {self.batch_size_negative}")
-        print(f"  n_epochs = {self.n_epochs}")
-        print("=" * 80 + "\n")
+        print("\n" + "=" * 80, flush=True)
+        print("Gaussian RBM Training Test", flush=True)
+        print("=" * 80, flush=True)
+        print("\nData Generation Parameters:", flush=True)
+        print(f"  mu1 = {self.mu1}, mu2 = {self.mu2}", flush=True)
+        print(f"  sigma1 = {self.sigma1}, sigma2 = {self.sigma2}", flush=True)
+        print(f"  mixture_weight = {self.mixture_weight}", flush=True)
+        print(f"  n_train_samples = {self.n_train_samples}", flush=True)
+        print(f"  n_test_samples = {self.n_test_samples}", flush=True)
+        print(f"  quantization_max_value = {self.quantization_max_value}", flush=True)
+        print("\nModel Hyperparameters:", flush=True)
+        print(f"  n_visible = {self.n_visible}, n_hidden = {self.n_hidden}", flush=True)
+        print(f"  beta = {self.beta}", flush=True)
+        print(f"  learning_rate = {self.learning_rate}", flush=True)
+        print(f"  batch_size_positive = {self.batch_size_positive}", flush=True)
+        print(f"  batch_size_negative = {self.batch_size_negative}", flush=True)
+        print(f"  n_epochs = {self.n_epochs}", flush=True)
+        print("=" * 80 + "\n", flush=True)
 
         # Generate training and testing samples
         key, key_train, key_test = jax.random.split(key, 3)
@@ -350,12 +351,12 @@ class TestTrainGaussian(unittest.TestCase):
         # Initialize optimizer state
         opt_state = self.optim.init((model.weights, model.biases))
 
-        print("> Model initialization complete")
-        print("> Starting training...\n")
+        print("> Model initialization complete", flush=True)
+        print("> Starting training...\n", flush=True)
 
         # Training loop
         for epoch in range(self.n_epochs):
-            print(f"> Epoch {epoch + 1}/{self.n_epochs}: Training...")
+            print(f"> Epoch {epoch + 1}/{self.n_epochs}: Starting training", flush=True)
 
             def do_epoch(key, model, bsz_positive, bsz_negative, data_positive, opt_state):
                 def batch_data(key, data, _bsz, clamped_blocks):
@@ -375,8 +376,19 @@ class TestTrainGaussian(unittest.TestCase):
                 key, key_pos = jax.random.split(key, 2)
                 batched_data_pos, n_batches = batch_data(key_pos, data_positive, bsz_positive, training_data_blocks)
 
-                def body_fun(carry, key_and_data):
-                    _key, _data_pos = key_and_data
+                # Log batch information
+                print(f"  - Processing {n_batches} batches ({bsz_positive} samples per batch)", flush=True)
+
+                params = model.weights, model.biases
+                carry = opt_state, params
+                keys = jax.random.split(key, n_batches)
+
+                # Replace jax.lax.scan with Python for loop to enable logging
+                for batch_idx in range(n_batches):
+                    _key = keys[batch_idx]
+                    _data_pos = batched_data_pos[batch_idx]
+
+                    print(f"  > Batch {batch_idx + 1}/{n_batches}: Processing batch", flush=True)
 
                     _opt_state, _params = carry
                     _model = eqx.tree_at(lambda m: (m.weights, m.biases), model, _params)
@@ -385,6 +397,18 @@ class TestTrainGaussian(unittest.TestCase):
                         key_init_pos, _model, positive_sampling_blocks, (1, bsz_positive)
                     )
                     vals_free_neg = hinton_init(key_init_neg, _model, negative_sampling_blocks, (bsz_negative,))
+
+                    # Log positive phase information
+                    pos_total_iters = self.schedule_positive.n_warmup + (
+                        self.schedule_positive.n_samples * self.schedule_positive.steps_per_sample
+                    )
+                    print(f"    [POSITIVE PHASE] Total Gibbs iterations: {pos_total_iters} (warmup: {self.schedule_positive.n_warmup}, samples: {self.schedule_positive.n_samples}, steps/sample: {self.schedule_positive.steps_per_sample})", flush=True)
+
+                    # Log negative phase information
+                    neg_total_iters = self.schedule_negative.n_warmup + (
+                        self.schedule_negative.n_samples * self.schedule_negative.steps_per_sample
+                    )
+                    print(f"    [NEGATIVE PHASE] Total Gibbs iterations: {neg_total_iters} (warmup: {self.schedule_negative.n_warmup}, samples: {self.schedule_negative.n_samples}, steps/sample: {self.schedule_negative.steps_per_sample})", flush=True)
 
                     ebm = IsingTrainingSpec(
                         _model,
@@ -396,6 +420,7 @@ class TestTrainGaussian(unittest.TestCase):
                         self.schedule_negative,
                     )
 
+                    # Call estimate_kl_grad (both phases happen inside this function)
                     grad_w, grad_b, _, _ = estimate_kl_grad(
                         key_train,
                         ebm,
@@ -407,6 +432,18 @@ class TestTrainGaussian(unittest.TestCase):
                         vals_free_neg,
                     )
 
+                    # Log gradient computation
+                    grad_w_mean = float(jnp.mean(grad_w))
+                    grad_w_std = float(jnp.std(grad_w))
+                    grad_w_max_abs = float(jnp.max(jnp.abs(grad_w)))
+                    grad_b_mean = float(jnp.mean(grad_b))
+                    grad_b_std = float(jnp.std(grad_b))
+                    grad_b_max_abs = float(jnp.max(jnp.abs(grad_b)))
+                    print(f"    [GRADIENT] Weight: mean={grad_w_mean:.6f}, std={grad_w_std:.6f}, max_abs={grad_w_max_abs:.6f} | Bias: mean={grad_b_mean:.6f}, std={grad_b_std:.6f}, max_abs={grad_b_max_abs:.6f}", flush=True)
+
+                    # Log parameter update
+                    print(f"    [PARAMETER UPDATE] Applying optimizer updates", flush=True)
+
                     grads = (grad_w, grad_b)
                     with jax.numpy_dtype_promotion("standard"):
                         updates, _opt_state = self.optim.update(grads, _opt_state, _params)
@@ -414,15 +451,10 @@ class TestTrainGaussian(unittest.TestCase):
                     _weights += updates[0]
                     _biases += updates[1]
 
-                    new_carry = _opt_state, (_weights, _biases)
-                    return new_carry, None
+                    carry = _opt_state, (_weights, _biases)
+                    print(f"  > Batch {batch_idx + 1}/{n_batches}: Completed\n", flush=True)
 
-                params = model.weights, model.biases
-                init_carry = opt_state, params
-                keys = jax.random.split(key, n_batches)
-                out_carry, _ = jax.lax.scan(body_fun, init_carry, (keys, batched_data_pos))
-
-                opt_state, params = out_carry
+                opt_state, params = carry
                 new_model = eqx.tree_at(lambda m: (m.weights, m.biases), model, params)
 
                 return new_model, opt_state
@@ -436,6 +468,8 @@ class TestTrainGaussian(unittest.TestCase):
                 train_samples_binary,
                 opt_state,
             )
+
+            print(f"> Epoch {epoch + 1}/{self.n_epochs}: Training completed", flush=True)
 
             # Evaluate after each epoch
             key, key_eval, key_init = jax.random.split(key, 3)
@@ -465,7 +499,7 @@ class TestTrainGaussian(unittest.TestCase):
             # Compute KL divergence
             kl_div = compute_kl_divergence(generated_samples_continuous, test_samples_continuous)
 
-            print(f"> Epoch {epoch + 1}/{self.n_epochs}: KL divergence = {kl_div:.4f}")
+            print(f"> Epoch {epoch + 1}/{self.n_epochs}: KL divergence = {kl_div:.4f}", flush=True)
 
             # Plot histograms
             plot_histograms_comparison(
@@ -478,7 +512,7 @@ class TestTrainGaussian(unittest.TestCase):
             )
 
         # Final evaluation
-        print("\n> Training complete. Performing final evaluation...")
+        print("\n> Training complete. Performing final evaluation...", flush=True)
 
         key, key_eval, key_init = jax.random.split(key, 3)
         program = IsingSamplingProgram(model, negative_sampling_blocks, [])
@@ -498,8 +532,8 @@ class TestTrainGaussian(unittest.TestCase):
 
         final_kl_div = compute_kl_divergence(final_generated_samples, test_samples_continuous)
 
-        print(f"> Final KL divergence = {final_kl_div:.4f}")
-        print("=" * 80 + "\n")
+        print(f"> Final KL divergence = {final_kl_div:.4f}", flush=True)
+        print("=" * 80 + "\n", flush=True)
 
         # Final visualization
         plot_histograms_comparison(
