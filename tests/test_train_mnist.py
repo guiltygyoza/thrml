@@ -119,7 +119,7 @@ class TestTrainMnist(unittest.TestCase):
         self.accuracy_schedule = SamplingSchedule(400, 40, 10)
 
         self.optim = optax.adam(learning_rate=0.01)
-        self.n_epochs = 1
+        self.n_epochs = 3
 
     def test_train_mnist(self):
         def do_epoch_simplified(
@@ -247,8 +247,10 @@ class TestTrainMnist(unittest.TestCase):
         best_accuracy = 0.0
         opt_state = self.optim.init((self.init_model.weights, self.init_model.biases))
 
+        print("% Model initialization")
         model = self.init_model
 
+        print("% Model training begins")
         for i in range(self.n_epochs):
             model, opt_state = do_epoch_simplified(
                 jax.random.key(0),
@@ -258,12 +260,14 @@ class TestTrainMnist(unittest.TestCase):
                 self.train_data_filtered,
                 opt_state,
             )
+            print(f"  > Completed epoch {i+1}")
 
             accuracy = compute_accuracy(
                 jax.random.key(2),
                 model,
                 500,
             )
+            print(f"  > Accuracy: {accuracy}")
             best_accuracy = max(best_accuracy, accuracy)
 
         self.assertGreater(best_accuracy, 0.9)
