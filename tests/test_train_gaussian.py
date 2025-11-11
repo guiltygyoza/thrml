@@ -421,6 +421,49 @@ def compute_kl_divergence(samples_p: Array, samples_q: Array, n_bins: int = 50) 
     return float(kl)
 
 
+def format_architecture_desc(
+    n_visible: int,
+    n_categories_per_visible_node: int,
+    n_hidden1: int,
+    n_hidden2: int,
+) -> str:
+    """Format model architecture description for plot titles.
+
+    Args:
+        n_visible: Number of visible nodes
+        n_categories_per_visible_node: Number of categories per visible node (2 = Spin, >2 = Categorical)
+        n_hidden1: Number of nodes in first hidden layer
+        n_hidden2: Number of nodes in second hidden layer
+
+    Returns:
+        Formatted architecture string, e.g., "Vis:8(Spin) H1:32(Spin) H2:8(Spin)"
+    """
+    visible_type = "Spin" if n_categories_per_visible_node == 2 else f"Cat({n_categories_per_visible_node})"
+    return f"Vis:{n_visible}({visible_type}) H1:{n_hidden1}(Spin) H2:{n_hidden2}(Spin)"
+
+
+def get_plots_folder_name(
+    n_visible: int,
+    n_hidden1: int,
+    n_hidden2: int,
+) -> str:
+    """Generate folder name for plots based on model architecture.
+
+    Args:
+        n_visible: Number of visible nodes
+        n_hidden1: Number of nodes in first hidden layer
+        n_hidden2: Number of nodes in second hidden layer (0 for RBM, >0 for DBM)
+
+    Returns:
+        Folder name string, e.g., "tests/test_train_gaussian_plots_dbm_v_8_h1_32_h2_8" or "tests/test_train_gaussian_plots_rbm_v_8_h1_32"
+    """
+    model_type = "dbm" if n_hidden2 > 0 else "rbm"
+    if n_hidden2 > 0:
+        return f"tests/test_train_gaussian_plots_{model_type}_v_{n_visible}_h1_{n_hidden1}_h2_{n_hidden2}"
+    else:
+        return f"tests/test_train_gaussian_plots_{model_type}_v_{n_visible}_h1_{n_hidden1}"
+
+
 def plot_histograms_comparison(
     generated_samples: Array,
     test_samples: Array,
@@ -428,6 +471,8 @@ def plot_histograms_comparison(
     epoch: int | None,
     n_epochs: int | None,
     is_final: bool = False,
+    architecture_desc: str | None = None,
+    plots_dir: str = "tests/test_train_gaussian_plots",
 ):
     """Create matplotlib histogram plot comparing generated and test samples.
 
@@ -438,6 +483,8 @@ def plot_histograms_comparison(
         epoch: Current epoch number (None if final)
         n_epochs: Total number of epochs (None if final)
         is_final: Whether this is the final plot
+        architecture_desc: Description of model architecture (e.g., "Vis:8(Spin) H1:32(Spin) H2:8(Spin)")
+        plots_dir: Directory to save plots to
     """
     plt.figure(figsize=(10, 6))
 
@@ -460,11 +507,15 @@ def plot_histograms_comparison(
         density=True,
     )
 
-    # Set title with KL divergence
+    # Set title with KL divergence and architecture
     if is_final:
         title = f"Final Model: KL Divergence = {kl_divergence:.4f}"
     else:
         title = f"Epoch {epoch}/{n_epochs}: KL Divergence = {kl_divergence:.4f}"
+
+    if architecture_desc:
+        title = f"{title}\n{architecture_desc}"
+
     plt.title(title)
     plt.xlabel("Value")
     plt.ylabel("Density")
@@ -472,7 +523,6 @@ def plot_histograms_comparison(
     plt.grid(True, alpha=0.3)
 
     # Save plot to file
-    plots_dir = "tests/test_train_gaussian_plots"
     os.makedirs(plots_dir, exist_ok=True)
 
     if is_final:
@@ -487,12 +537,14 @@ def plot_histograms_comparison(
     plt.pause(0.1)  # Brief pause to ensure plot renders
 
 
-def plot_kl_divergence_over_epochs(kl_divergences: list[float], kl_threshold: float):
+def plot_kl_divergence_over_epochs(kl_divergences: list[float], kl_threshold: float, architecture_desc: str | None = None, plots_dir: str = "tests/test_train_gaussian_plots"):
     """Create matplotlib plot showing KL divergence over training epochs.
 
     Args:
         kl_divergences: List of KL divergence values, one per epoch
         kl_threshold: Threshold value to display as horizontal line
+        architecture_desc: Description of model architecture (e.g., "Vis:8(Spin) H1:32(Spin) H2:8(Spin)")
+        plots_dir: Directory to save plots to
     """
     plt.figure(figsize=(10, 6))
 
@@ -502,13 +554,16 @@ def plot_kl_divergence_over_epochs(kl_divergences: list[float], kl_threshold: fl
 
     plt.xlabel("Epoch", fontsize=12)
     plt.ylabel("KL Divergence (train)", fontsize=12)
-    plt.title("KL Divergence Over Training Epochs", fontsize=14)
+
+    title = "KL Divergence Over Training Epochs"
+    if architecture_desc:
+        title = f"{title}\n{architecture_desc}"
+    plt.title(title, fontsize=14)
     plt.legend()
     plt.grid(True, alpha=0.3)
     plt.xlim(left=0.5)
 
     # Save plot to file
-    plots_dir = "tests/test_train_gaussian_plots"
     os.makedirs(plots_dir, exist_ok=True)
     filename = os.path.join(plots_dir, "kl_divergence_over_epochs.png")
     plt.savefig(filename, dpi=150, bbox_inches="tight")
@@ -534,11 +589,11 @@ class TestTrainGaussian(unittest.TestCase):
         self.quantization_max_value = 5.0
 
         # Model hyperparameters (surfaced to top level)
-        self.n_visible = 8
+        self.n_visible = 16
         self.n_categories_per_visible_node = 2  # 2 = binary (SpinNode), >2 = categorical (CategoricalNode)
-        self.n_hidden = 16  # Kept for reference (RBM)
         self.n_hidden1 = 32  # First hidden layer (DBM)
         self.n_hidden2 = 8  # Second hidden layer (DBM)
+        self.n_hidden = 16  # Kept for reference (RBM)
         self.beta = 1.0
         self.learning_rate = 0.01
         self.batch_size_positive = 50
@@ -1066,6 +1121,19 @@ class TestTrainGaussian(unittest.TestCase):
         print(f"> Final KL divergence (test) = {final_kl_div:.4f}", flush=True)
         print("=" * 80 + "\n", flush=True)
 
+        # Generate architecture description for plots
+        architecture_desc = format_architecture_desc(
+            self.n_visible,
+            self.n_categories_per_visible_node,
+            self.n_hidden1,
+            self.n_hidden2,
+        )
+        plots_dir = get_plots_folder_name(
+            self.n_visible,
+            self.n_hidden1,
+            self.n_hidden2,
+        )
+
         # Generate plots
         # 1. Histogram comparison of model samples vs test samples
         plot_histograms_comparison(
@@ -1075,10 +1143,12 @@ class TestTrainGaussian(unittest.TestCase):
             None,
             None,
             is_final=True,
+            architecture_desc=architecture_desc,
+            plots_dir=plots_dir,
         )
 
         # 2. KL divergence over epochs
-        plot_kl_divergence_over_epochs(kl_divergences, self.kl_threshold)
+        plot_kl_divergence_over_epochs(kl_divergences, self.kl_threshold, architecture_desc=architecture_desc, plots_dir=plots_dir)
 
         # # Assert KL divergence is below threshold
         # self.assertLess(final_kl_div, self.kl_threshold)
