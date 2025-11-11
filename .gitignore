@@ -166,4 +166,4 @@ cython_debug/
 .vscode/
 
 # Test plots
-tests/test_train_gaussian_plots/
+tests/test_train_gaussian_plots*/
