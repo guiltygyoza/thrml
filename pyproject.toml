@@ -31,7 +31,8 @@ testing = [
     "pytest==7.2.0",
     "nbmake==1.4.3",
     "networkx>=2.6.3",
-    "optax>=0.2.4"
+    "optax>=0.2.4",
+	"matplotlib>=3.7.1",
 ]
 development = [
     "black==25.1.0",

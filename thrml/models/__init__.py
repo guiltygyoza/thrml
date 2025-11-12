@@ -10,6 +10,11 @@ from .ebm import AbstractEBM as AbstractEBM
 from .ebm import AbstractFactorizedEBM as AbstractFactorizedEBM
 from .ebm import EBMFactor as EBMFactor
 from .ebm import FactorizedEBM as FactorizedEBM
+from .hybrid import HybridEBM as HybridEBM
+from .hybrid import HybridSamplingProgram as HybridSamplingProgram
+from .hybrid import HybridTrainingSpec as HybridTrainingSpec
+from .hybrid import estimate_kl_grad_hybrid as estimate_kl_grad_hybrid
+from .hybrid import estimate_moments_hybrid as estimate_moments_hybrid
 from .ising import IsingEBM as IsingEBM
 from .ising import IsingSamplingProgram as IsingSamplingProgram
 from .ising import IsingTrainingSpec as IsingTrainingSpec
