@@ -5,9 +5,12 @@ This script trains an RBM to learn the ground state wavefunction of the 1D TFIM
 with J=Γ=1, which should converge to E/N = -2/π ≈ -0.6366.
 """
 
+from pathlib import Path
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import matplotlib.pyplot as plt
 import optax
 from jaxtyping import Array, Key
 from math import sqrt
@@ -312,13 +315,23 @@ def train_vmc_tfim(
     if schedule is None:
         schedule = SamplingSchedule(n_warmup=10000, n_samples=n_samples_per_epoch, steps_per_sample=50)
 
-    # Initialize optimizer
-    optimizer = optax.adam(learning_rate=learning_rate)
-    opt_state = optimizer.init((model.weights, model.biases))
+    # Initialize optimizer with manual cosine decay
+    # Use base learning rate of 1.0, we'll scale updates manually
+    base_optimizer = optax.adam(learning_rate=1.0)
+    opt_state = base_optimizer.init((model.weights, model.biases))
+
+    # Cosine decay parameters
+    alpha = 0.01  # Final learning rate will be initial_lr * alpha
 
     energy_history = []
+    std_dev_history = []
 
     for epoch in range(n_epochs):
+        # Compute current learning rate using cosine decay
+        # lr(t) = initial_lr * (alpha + (1 - alpha) * (1 + cos(π * t / T)) / 2)
+        # where t is current epoch, T is total epochs
+        cosine_factor = 0.5 * (1 + jnp.cos(jnp.pi * epoch / n_epochs))
+        current_lr = learning_rate * (alpha + (1 - alpha) * cosine_factor)
         # Split keys
         key, key_energy, key_grad = jax.random.split(key, 3)
 
@@ -338,12 +351,15 @@ def train_vmc_tfim(
         # Compute gradients using the same samples
         grad_w, grad_b = compute_vmc_gradients(model, samples, local_energies, mean_energy)
 
-        # Update parameters
-        updates, opt_state = optimizer.update(
+        # Update parameters with manual learning rate scaling
+        updates, opt_state = base_optimizer.update(
             (grad_w, grad_b),
             opt_state,
             (model.weights, model.biases),
         )
+        # Scale updates by current learning rate
+        updates = jax.tree.map(lambda u: current_lr * u, updates)
+
         new_weights = optax.apply_updates(model.weights, updates[0])
         new_biases = optax.apply_updates(model.biases, updates[1])
         model = eqx.tree_at(lambda m: (m.weights, m.biases), model, (new_weights, new_biases))
@@ -352,6 +368,10 @@ def train_vmc_tfim(
         energy_per_site = float(mean_energy / N)
         energy_history.append(energy_per_site)
         std_dev = sqrt(float(energy_var))
+        std_dev_history.append(std_dev)
+
+        # Get current learning rate for logging
+        current_lr_float = float(current_lr)
 
         # Compute gradient diagnostics
         grad_w_norm = float(jnp.linalg.norm(grad_w))
@@ -367,7 +387,7 @@ def train_vmc_tfim(
 
         print(
             f"Epoch {epoch+1}/{n_epochs}: E/N = {energy_per_site:.6f}, "
-            f"Var = {energy_var:.6e}, Std = {std_dev:.6e}"
+            f"Var = {energy_var:.6e}, Std = {std_dev:.6e}, LR = {current_lr_float:.6e}"
         )
         print(
             f"  Gradients: ||∇W|| = {grad_w_norm:.6e}, ||∇b|| = {grad_b_norm:.6e}, "
@@ -387,7 +407,7 @@ def train_vmc_tfim(
         #         print(f"Early stopping: variance {recent_variance:.6e} < threshold {variance_threshold}")
         #         break
 
-    return model, energy_history
+    return model, energy_history, std_dev_history
 
 
 def main():
@@ -402,7 +422,7 @@ def main():
     # Training hyperparameters
     n_epochs = 100
     n_samples_per_epoch = 4000
-    learning_rate = 0.005
+    learning_rate = 0.01
     variance_threshold = 1e-5
     variance_window = 5
 
@@ -422,7 +442,7 @@ def main():
     expected_energy = -4 / jnp.pi
     print(f"Expected ground state energy per site: -4/π ≈ {expected_energy:.6f}\n")
 
-    trained_model, energy_history = train_vmc_tfim(
+    trained_model, energy_history, std_dev_history = train_vmc_tfim(
         model,
         key,
         n_epochs,
@@ -445,6 +465,43 @@ def main():
     print(f"Expected -4/π = {expected_energy:.6f}")
     print(f"Error = {abs(final_energy_per_site - expected_energy):.6f}")
     print(f"{'='*60}")
+
+    # Create plot
+    epochs = list(range(1, len(energy_history) + 1))
+
+    fig, ax1 = plt.subplots(figsize=(10, 6))
+
+    # Plot E/N
+    color1 = 'tab:blue'
+    ax1.set_xlabel('Epoch', fontsize=12)
+    ax1.set_ylabel('E/N', color=color1, fontsize=12)
+    line1 = ax1.plot(epochs, energy_history, color=color1, label='E/N', linewidth=2)
+    ax1.tick_params(axis='y', labelcolor=color1)
+    ax1.grid(True, alpha=0.3)
+    hline = ax1.axhline(y=expected_energy, color='r', linestyle='--', alpha=0.7, label=f'Expected: {expected_energy:.6f}')
+
+    # Plot standard deviation on secondary y-axis
+    ax2 = ax1.twinx()
+    color2 = 'tab:orange'
+    ax2.set_ylabel('Standard Deviation', color=color2, fontsize=12)
+    line2 = ax2.plot(epochs, std_dev_history, color=color2, label='Std Dev', linewidth=2, alpha=0.7)
+    ax2.tick_params(axis='y', labelcolor=color2)
+
+    # Combine legends
+    lines = line1 + [hline] + line2
+    labels = [l.get_label() for l in lines]
+    ax1.legend(lines, labels, loc='best')
+
+    plt.title(f'VMC Training: E/N and Standard Deviation over Epochs\nN={N}, Hidden={n_hidden}, J={J}, Γ={Gamma}', fontsize=12)
+    plt.tight_layout()
+
+    # Create directory and save plot
+    plot_dir = Path(__file__).parent / 'vmc_tfim'
+    plot_dir.mkdir(exist_ok=True)
+    plot_path = plot_dir / 'training_history.png'
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+    print(f"\nPlot saved to: {plot_path}")
+    plt.close()
 
 
 if __name__ == "__main__":
