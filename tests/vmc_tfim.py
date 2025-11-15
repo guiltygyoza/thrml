@@ -58,7 +58,7 @@ def compute_log_wavefunction_amplitude_rbm(model: IsingEBM, visible_state: Array
     where s_i, h_j ∈ {-1,+1} (Ising spins).
 
     Hidden variables are conditionally independent, so we can compute:
-    log|ψ(s)| = -0.5 * (E_visible - log_Z_hidden)
+    log|ψ(s)| = 0.5 * (E_visible + log_Z_hidden)
     where Z_hidden = Π_j [2 * cosh(β * (b_j + Σᵢ W_ij * s_i))]
 
     Args:
@@ -419,7 +419,7 @@ def main():
     print("Starting VMC training for 1D TFIM...")
     print(f"System size: N={N}, Hidden units: {n_hidden}")
     print(f"J={J}, Γ={Gamma}")
-	expected_energy = -2 / jnp.pi
+    expected_energy = -4 / jnp.pi
     print(f"Expected ground state energy per site: -4/π ≈ {expected_energy:.6f}\n")
 
     trained_model, energy_history = train_vmc_tfim(
