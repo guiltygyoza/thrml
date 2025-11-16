@@ -367,7 +367,8 @@ def train_vmc_tfim(
         # Log and track
         energy_per_site = float(mean_energy / N)
         energy_history.append(energy_per_site)
-        std_dev = sqrt(float(energy_var))
+        energy_var_per_site = float(energy_var / (N * N))  # Convert to per-site variance
+        std_dev = sqrt(energy_var_per_site)  # Per-site standard deviation
         std_dev_history.append(std_dev)
 
         # Get current learning rate for logging
@@ -387,7 +388,7 @@ def train_vmc_tfim(
 
         print(
             f"Epoch {epoch+1}/{n_epochs}: E/N = {energy_per_site:.6f}, "
-            f"Var = {energy_var:.6e}, Std = {std_dev:.6e}, LR = {current_lr_float:.6e}"
+            f"Var = {energy_var_per_site:.6e}, Std = {std_dev:.6e}, LR = {current_lr_float:.6e}"
         )
         print(
             f"  Gradients: ||∇W|| = {grad_w_norm:.6e}, ||∇b|| = {grad_b_norm:.6e}, "
