@@ -88,8 +88,8 @@ def compute_log_wavefunction_amplitude_rbm(model: IsingEBM, visible_state: Array
     weights_matrix = model.weights.reshape(n_visible, n_hidden)
 
     # Compute visible bias term (with beta scaling)
-    # E_visible = -β * Σ a_i s_i
-    E_visible = -model.beta * jnp.sum(visible_biases * s)
+    # E_visible = β * Σ a_i s_i
+    E_visible = model.beta * jnp.sum(visible_biases * s)
 
     # For each hidden unit j, compute log(2 * cosh(β * (b_j + Σᵢ W_ij * s_i)))
     # Since h_j ∈ {-1,+1}, we need: Z_hidden_j = 2 * cosh(β * (b_j + Σᵢ W_ij * s_i))
