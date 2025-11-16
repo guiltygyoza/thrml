@@ -421,11 +421,11 @@ def main():
     beta = 1.0
 
     # Training hyperparameters
-    n_epochs = 100
+    n_epochs = 60
     n_samples_per_epoch = 4000
     learning_rate = 0.01
-    variance_threshold = 1e-5
-    variance_window = 5
+    variance_threshold = 1e-5 # for early stopping
+    variance_window = 5 # for early stopping
 
     # Initialize
     key = jax.random.key(42)
@@ -472,28 +472,35 @@ def main():
 
     fig, ax1 = plt.subplots(figsize=(10, 6))
 
-    # Plot E/N
-    color1 = 'tab:blue'
-    ax1.set_xlabel('Epoch', fontsize=12)
-    ax1.set_ylabel('E/N', color=color1, fontsize=12)
-    line1 = ax1.plot(epochs, energy_history, color=color1, label='E/N', linewidth=2)
-    ax1.tick_params(axis='y', labelcolor=color1)
+    # Plot E/N with error bars
+    ax1.set_xlabel('Training Epoch', fontsize=12)
+    ax1.set_ylabel('E/N', fontsize=12)
+    line1 = ax1.errorbar(
+        epochs,
+        energy_history,
+        yerr=std_dev_history,
+        linestyle='none',  # No connecting line
+        marker='o',  # Circle markers
+        markerfacecolor='white',  # White interior
+        markeredgecolor='black',  # Black border
+        markeredgewidth=1,  # Thin border
+        markersize=4,  # Small circles
+        ecolor='black',  # Black error bars
+        elinewidth=1,  # Thin error bar lines
+        capsize=0,  # No caps on error bars
+        label='E/N',
+        zorder=2  # Points on top
+    )
+    ax1.tick_params(axis='y')
     ax1.grid(True, alpha=0.3)
     hline = ax1.axhline(y=expected_energy, color='r', linestyle='--', alpha=0.7, label=f'Expected: {expected_energy:.6f}')
 
-    # Plot standard deviation on secondary y-axis
-    ax2 = ax1.twinx()
-    color2 = 'tab:orange'
-    ax2.set_ylabel('Standard Deviation', color=color2, fontsize=12)
-    line2 = ax2.plot(epochs, std_dev_history, color=color2, label='Std Dev', linewidth=2, alpha=0.7)
-    ax2.tick_params(axis='y', labelcolor=color2)
-
     # Combine legends
-    lines = line1 + [hline] + line2
-    labels = [l.get_label() for l in lines]
+    lines = [line1, hline]
+    labels = ['E/N', f'Expected: {expected_energy:.6f}']
     ax1.legend(lines, labels, loc='best')
 
-    plt.title(f'VMC Training: E/N and Standard Deviation over Epochs\nN={N}, Hidden={n_hidden}, J={J}, Γ={Gamma}', fontsize=12)
+    plt.title(f'RBM trained in VMC for 1-D Transverse Field Ising Model: E/N at critical point\nN={N}, Hidden Layer Width={n_hidden}', fontsize=12)
     plt.tight_layout()
 
     # Create directory and save plot
