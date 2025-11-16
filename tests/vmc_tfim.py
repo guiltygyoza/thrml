@@ -274,7 +274,8 @@ def train_vmc_tfim(
     schedule: SamplingSchedule | None = None,
     visible_nodes: list[SpinNode] | None = None,
     hidden_nodes: list[SpinNode] | None = None,
-) -> tuple[IsingEBM, list[float]]:
+    ema_decay: float = 0.999,
+) -> tuple[IsingEBM, list[float], list[float], list[float], list[float]]:
     """Train RBM using VMC to learn TFIM ground state.
 
     Args:
@@ -290,9 +291,10 @@ def train_vmc_tfim(
         schedule: Sampling schedule (if None, creates default)
         visible_nodes: List of visible nodes (if None, extracts from model)
         hidden_nodes: List of hidden nodes (if None, extracts from model)
+        ema_decay: Decay factor for EMA (higher = slower update, more stable)
 
     Returns:
-        Tuple of (trained_model, energy_history)
+        Tuple of (trained_model_ema, energy_history, std_dev_history, ema_energy_history, ema_std_dev_history)
     """
     # Extract nodes if not provided
     if visible_nodes is None or hidden_nodes is None:
@@ -325,6 +327,12 @@ def train_vmc_tfim(
 
     energy_history = []
     std_dev_history = []
+    ema_energy_history = []
+    ema_std_dev_history = []
+
+    # Initialize EMA parameters
+    ema_weights = model.weights.copy()
+    ema_biases = model.biases.copy()
 
     for epoch in range(n_epochs):
         # Compute current learning rate using cosine decay
@@ -333,7 +341,7 @@ def train_vmc_tfim(
         cosine_factor = 0.5 * (1 + jnp.cos(jnp.pi * epoch / n_epochs))
         current_lr = learning_rate * (alpha + (1 - alpha) * cosine_factor)
         # Split keys
-        key, key_energy, key_grad = jax.random.split(key, 3)
+        key, key_energy, key_grad, key_ema_eval = jax.random.split(key, 4)
 
         # Compute energy expectation and get samples
         mean_energy, energy_var, local_energies, samples = compute_vmc_energy(
@@ -364,12 +372,37 @@ def train_vmc_tfim(
         new_biases = optax.apply_updates(model.biases, updates[1])
         model = eqx.tree_at(lambda m: (m.weights, m.biases), model, (new_weights, new_biases))
 
-        # Log and track
+        # Update EMA parameters
+        ema_weights = ema_decay * ema_weights + (1 - ema_decay) * new_weights
+        ema_biases = ema_decay * ema_biases + (1 - ema_decay) * new_biases
+
+        # Log and track regular model metrics
         energy_per_site = float(mean_energy / N)
         energy_history.append(energy_per_site)
         energy_var_per_site = float(energy_var / (N * N))  # Convert to per-site variance
         std_dev = sqrt(energy_var_per_site)  # Per-site standard deviation
         std_dev_history.append(std_dev)
+
+        # Evaluate EMA model
+        ema_model = eqx.tree_at(lambda m: (m.weights, m.biases), model, (ema_weights, ema_biases))
+        ema_mean_energy, ema_energy_var, _, _ = compute_vmc_energy(
+            ema_model,
+            key_ema_eval,
+            n_samples_per_epoch,
+            J,
+            Gamma,
+            schedule,
+            visible_nodes,
+            hidden_nodes,
+            visible_block,
+        )
+
+        # Log and track EMA metrics
+        ema_energy_per_site = float(ema_mean_energy / N)
+        ema_energy_history.append(ema_energy_per_site)
+        ema_energy_var_per_site = float(ema_energy_var / (N * N))
+        ema_std_dev = sqrt(ema_energy_var_per_site)
+        ema_std_dev_history.append(ema_std_dev)
 
         # Get current learning rate for logging
         current_lr_float = float(current_lr)
@@ -391,6 +424,10 @@ def train_vmc_tfim(
             f"Var = {energy_var_per_site:.6e}, Std = {std_dev:.6e}, LR = {current_lr_float:.6e}"
         )
         print(
+            f"  EMA: E/N = {ema_energy_per_site:.6f}, "
+            f"Var = {ema_energy_var_per_site:.6e}, Std = {ema_std_dev:.6e}"
+        )
+        print(
             f"  Gradients: ||∇W|| = {grad_w_norm:.6e}, ||∇b|| = {grad_b_norm:.6e}, "
             f"max(|∇W|) = {grad_w_max:.6e}, max(|∇b|) = {grad_b_max:.6e}"
         )
@@ -408,7 +445,9 @@ def train_vmc_tfim(
         #         print(f"Early stopping: variance {recent_variance:.6e} < threshold {variance_threshold}")
         #         break
 
-    return model, energy_history, std_dev_history
+    # Return EMA model (final trained model with EMA parameters)
+    final_ema_model = eqx.tree_at(lambda m: (m.weights, m.biases), model, (ema_weights, ema_biases))
+    return final_ema_model, energy_history, std_dev_history, ema_energy_history, ema_std_dev_history
 
 
 def main():
@@ -426,6 +465,7 @@ def main():
     learning_rate = 0.01
     variance_threshold = 1e-5 # for early stopping
     variance_window = 5 # for early stopping
+    ema_decay = 0.75  # EMA decay factor
 
     # Initialize
     key = jax.random.key(42)
@@ -443,7 +483,7 @@ def main():
     expected_energy = -4 / jnp.pi
     print(f"Expected ground state energy per site: -4/π ≈ {expected_energy:.6f}\n")
 
-    trained_model, energy_history, std_dev_history = train_vmc_tfim(
+    trained_model, energy_history, std_dev_history, ema_energy_history, ema_std_dev_history = train_vmc_tfim(
         model,
         key,
         n_epochs,
@@ -455,30 +495,52 @@ def main():
         variance_window,
         visible_nodes=visible_nodes,
         hidden_nodes=hidden_nodes,
+        ema_decay=ema_decay,
     )
 
-    # Final results
-    final_energy_per_site = energy_history[-1]
+    # Final evaluation with EMA model (using more samples for better accuracy)
+    print("\nPerforming final evaluation with EMA model...")
+    key, key_final_eval = jax.random.split(key)
+    final_schedule = SamplingSchedule(n_warmup=20000, n_samples=10000, steps_per_sample=50)
+    visible_block = Block(visible_nodes)
+
+    final_mean_energy, final_energy_var, _, _ = compute_vmc_energy(
+        trained_model,  # This is already the EMA model
+        key_final_eval,
+        10000,  # More samples for final evaluation
+        J,
+        Gamma,
+        final_schedule,
+        visible_nodes,
+        hidden_nodes,
+        visible_block,
+    )
+
+    final_energy_per_site = float(final_mean_energy / N)
+    final_energy_var_per_site = float(final_energy_var / (N * N))
+    final_std_dev = sqrt(final_energy_var_per_site)
 
     print(f"\n{'='*60}")
     print(f"Training completed!")
-    print(f"Final E/N = {final_energy_per_site:.6f}")
+    print(f"Final E/N (EMA) = {final_energy_per_site:.6f}")
+    print(f"Final Var (EMA) = {final_energy_var_per_site:.6e}")
+    print(f"Final Std (EMA) = {final_std_dev:.6e}")
     print(f"Expected -4/π = {expected_energy:.6f}")
     print(f"Error = {abs(final_energy_per_site - expected_energy):.6f}")
     print(f"{'='*60}")
 
-    # Create plot
-    epochs = list(range(1, len(energy_history) + 1))
+    # Create plot using EMA results
+    epochs = list(range(1, len(ema_energy_history) + 1))
 
     fig, ax1 = plt.subplots(figsize=(10, 6))
 
-    # Plot E/N with error bars
+    # Plot E/N with error bars (using EMA results)
     ax1.set_xlabel('Training Epoch', fontsize=12)
     ax1.set_ylabel('E/N', fontsize=12)
     line1 = ax1.errorbar(
         epochs,
-        energy_history,
-        yerr=std_dev_history,
+        ema_energy_history,
+        yerr=ema_std_dev_history,
         linestyle='none',  # No connecting line
         marker='o',  # Circle markers
         markerfacecolor='white',  # White interior
@@ -488,16 +550,35 @@ def main():
         ecolor='black',  # Black error bars
         elinewidth=1,  # Thin error bar lines
         capsize=0,  # No caps on error bars
-        label='E/N',
+        label='E/N (EMA)',
         zorder=2  # Points on top
     )
     ax1.tick_params(axis='y')
     ax1.grid(True, alpha=0.3)
     hline = ax1.axhline(y=expected_energy, color='r', linestyle='--', alpha=0.7, label=f'Expected: {expected_energy:.6f}')
 
+    # Optionally plot regular model results for comparison (lighter, smaller)
+    line2 = ax1.errorbar(
+        epochs,
+        energy_history,
+        yerr=std_dev_history,
+        linestyle='none',
+        marker='o',
+        markerfacecolor='lightgray',
+        markeredgecolor='gray',
+        markeredgewidth=0.5,
+        markersize=2,
+        ecolor='gray',
+        elinewidth=0.5,
+        capsize=0,
+        label='E/N (regular)',
+        alpha=0.5,
+        zorder=1
+    )
+
     # Combine legends
-    lines = [line1, hline]
-    labels = ['E/N', f'Expected: {expected_energy:.6f}']
+    lines = [line1, line2, hline]
+    labels = ['E/N (EMA)', 'E/N (regular)', f'Expected: {expected_energy:.6f}']
     ax1.legend(lines, labels, loc='best')
 
     plt.title(f'RBM trained in VMC for 1-D Transverse Field Ising Model: E/N at critical point\nN={N}, Hidden Layer Width={n_hidden}', fontsize=12)
