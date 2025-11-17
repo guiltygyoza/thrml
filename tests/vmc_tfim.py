@@ -2,7 +2,7 @@
 Variational Monte Carlo training for 1D Transverse Field Ising Model using RBM.
 
 This script trains an RBM to learn the ground state wavefunction of the 1D TFIM
-with J=Γ=1, which should converge to E/N = -2/π ≈ -0.6366.
+with J=Γ=1, which should converge to E/N = -4/π.
 """
 
 from pathlib import Path
