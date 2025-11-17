@@ -309,7 +309,7 @@ def plot_histograms_comparison(
         test_samples,
         bins=n_bins,
         alpha=0.6,
-        label="Test Data (True Distribution)",
+        label="Data Distribution",
         color="orange",
         density=True,
     )
@@ -317,14 +317,14 @@ def plot_histograms_comparison(
         generated_samples,
         bins=n_bins,
         alpha=0.6,
-        label="Model Generated Samples",
+        label="Model Distribution",
         color="blue",
         density=True,
     )
 
     # Set title with KL divergence and architecture
     if is_final:
-        title = f"Final Model: KL Divergence = {kl_divergence:.4f}"
+        title = f"KL Divergence with testing samples = {kl_divergence:.4f}"
     else:
         title = f"Epoch {epoch}/{n_epochs}: KL Divergence = {kl_divergence:.4f}"
 
@@ -333,7 +333,7 @@ def plot_histograms_comparison(
 
     plt.title(title)
     plt.xlabel("Value")
-    plt.ylabel("Density")
+    plt.ylabel("Normalized Frequency")
     plt.legend()
     plt.grid(True, alpha=0.3)
 
@@ -364,8 +364,13 @@ def plot_kl_divergence_over_epochs(kl_divergences: list[float], kl_threshold: fl
     plt.figure(figsize=(10, 6))
 
     epochs = list(range(1, len(kl_divergences) + 1))
-    plt.plot(epochs, kl_divergences, marker='o', linestyle='-', linewidth=2, markersize=6)
+    plt.plot(epochs, kl_divergences, marker='o', linestyle='-', linewidth=1,
+             markersize=6, markerfacecolor='white', markeredgecolor='black', markeredgewidth=1, color='black')
     plt.axhline(y=kl_threshold, color='r', linestyle='--', linewidth=2, label=f'Threshold ({kl_threshold})')
+
+    # Set x-axis ticks every 5 epochs
+    max_epoch = len(kl_divergences)
+    plt.xticks(range(0, max_epoch + 1, 5))
 
     plt.xlabel("Epoch", fontsize=12)
     plt.ylabel("KL Divergence (train)", fontsize=12)
@@ -404,7 +409,7 @@ class TestTrainGaussian(unittest.TestCase):
         self.quantization_max_value = 5.0
 
         # Model hyperparameters (surfaced to top level)
-        self.n_visible = 16
+        self.n_visible = 8
         self.n_hidden1 = 32  # First hidden layer (DBM)
         self.n_hidden2 = 8  # Second hidden layer (DBM)
         self.n_hidden = 16  # Kept for reference (RBM)

@@ -467,6 +467,9 @@ def main():
     variance_window = 5 # for early stopping
     ema_decay = 0.75  # EMA decay factor
 
+    # Number of samples to generate after training
+    K = 20
+
     # Initialize
     key = jax.random.key(42)
     key, key_model = jax.random.split(key)
@@ -528,6 +531,47 @@ def main():
     print(f"Expected -4/π = {expected_energy:.6f}")
     print(f"Error = {abs(final_energy_per_site - expected_energy):.6f}")
     print(f"{'='*60}")
+
+    # Generate K samples of visible node states
+    key, key_sample = jax.random.split(key)
+    sample_schedule = SamplingSchedule(n_warmup=10000, n_samples=K, steps_per_sample=50)
+
+    # Create sampling program
+    free_blocks: list[SuperBlock] = [Block(visible_nodes), Block(hidden_nodes)]
+    program = IsingSamplingProgram(trained_model, free_blocks, clamped_blocks=[])
+
+    # Initialize states
+    key, key_init = jax.random.split(key_sample)
+    init_states = hinton_init(key_init, trained_model, free_blocks, ())
+
+    # Sample visible states
+    key, key_sample_final = jax.random.split(key)
+    samples_list = sample_states(
+        key_sample_final,
+        program,
+        sample_schedule,
+        init_states,
+        [],
+        [visible_block],
+    )
+
+    # Extract visible samples: shape (K, N)
+    visible_samples = samples_list[0]  # shape: (K, N), boolean array
+
+    # Convert to binary strings: True (+1) -> 1, False (-1) -> 0
+    binary_samples = visible_samples.astype(jnp.int32)  # True -> 1, False -> 0
+
+    # Save binary strings to file (K lines, one binary string per line)
+    plot_dir = Path(__file__).parent / 'vmc_tfim'
+    plot_dir.mkdir(exist_ok=True)
+    samples_file = plot_dir / 'binary_samples.txt'
+
+    with open(samples_file, 'w') as f:
+        for sample in binary_samples:
+            binary_string = ''.join(str(int(bit)) for bit in sample)
+            f.write(binary_string + '\n')
+
+    print(f"Saved {K} binary state samples to: {samples_file}")
 
     # Create plot using EMA results
     epochs = list(range(1, len(ema_energy_history) + 1))
